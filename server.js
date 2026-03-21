@@ -5,7 +5,7 @@ const messages = [];
 const online   = {};
 let   nextId   = 1;
 
-const MAX_MESSAGES = 500;
+const MAX_MESSAGES = 250;
 const OFFLINE_MS   = 90000;
 
 // ── Profanity filter ───────────────────────────────────────────
