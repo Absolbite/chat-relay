@@ -1,0 +1,12 @@
+{
+  "name": "redzlib-chat-relay",
+  "version": "1.0.0",
+  "description": "Cross-server chat relay for redzlib Global Chat",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
