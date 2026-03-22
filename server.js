@@ -18,68 +18,38 @@ function normalizeLeet(text) {
     return text.toLowerCase().replace(/[013456789@$!]/g, c => LEET_MAP[c] || c);
 }
 
-// Каждый паттерн ловит слово + повторы букв + символы между буквами
 const BAD_PATTERNS = [
-    // fuck, fuuck, fuckkk, fucked, fucking, fvck, fuk, phuck и т.д.
     /f+u+c+k+/i,
     /f[\s_\-.*]*u[\s_\-.*]*c[\s_\-.*]*k/i,
     /fv+ck/i,
     /fu+k+/i,
     /ph[\s_\-.*]*u[\s_\-.*]*c[\s_\-.*]*k/i,
-
-    // shit, shiit, shitt, sh!t
     /s+h+i+t+/i,
     /s[\s_\-.*]*h[\s_\-.*]*i[\s_\-.*]*t/i,
-
-    // bitch, biitch, b!tch
     /b+i+t+c+h+/i,
     /b[\s_\-.*]*i[\s_\-.*]*t[\s_\-.*]*c[\s_\-.*]*h/i,
-
-    // asshole, ass
     /a+s+s+h+o+l+e+/i,
     /a[\s_\-.*]*s[\s_\-.*]*s[\s_\-.*]*h[\s_\-.*]*o[\s_\-.*]*l[\s_\-.*]*e/i,
-
-    // cunt
     /c+u+n+t+/i,
     /c[\s_\-.*]*u[\s_\-.*]*n[\s_\-.*]*t/i,
-
-    // dick, d!ck, diick
     /d+i+c+k+/i,
     /d[\s_\-.*]*i[\s_\-.*]*c[\s_\-.*]*k/i,
-
-    // cock
     /c+o+c+k+/i,
     /c[\s_\-.*]*o[\s_\-.*]*c[\s_\-.*]*k/i,
-
-    // pussy
     /p+u+s+s+y+/i,
     /p[\s_\-.*]*u[\s_\-.*]*s[\s_\-.*]*s[\s_\-.*]*y/i,
-
-    // whore
     /w+h+o+r+e+/i,
     /wh[\s_\-.*]*o[\s_\-.*]*r[\s_\-.*]*e/i,
-
-    // slut
     /s+l+u+t+/i,
     /s[\s_\-.*]*l[\s_\-.*]*u[\s_\-.*]*t/i,
-
-    // bastard
     /b+a+s+t+a+r+d+/i,
     /b[\s_\-.*]*a[\s_\-.*]*s[\s_\-.*]*t[\s_\-.*]*a[\s_\-.*]*r[\s_\-.*]*d/i,
-
-    // motherfucker
     /m+o+t+h+e+r+f+u+c+k+/i,
-
-    // faggot, fag
     /f+a+g+o+t+/i,
     /f[\s_\-.*]*a[\s_\-.*]*g[\s_\-.*]*g[\s_\-.*]*o[\s_\-.*]*t/i,
     /\bfa+g+\b/i,
-
-    // retard
     /r+e+t+a+r+d+/i,
     /r[\s_\-.*]*e[\s_\-.*]*t[\s_\-.*]*a[\s_\-.*]*r[\s_\-.*]*d/i,
-
-    // nigger, nigga, niger, niga, nega — все варианты с разделителями
     /n[\s_\-.*]*i[\s_\-.*]*g[\s_\-.*]*g[\s_\-.*]*e[\s_\-.*]*r/i,
     /n[\s_\-.*]*i[\s_\-.*]*g[\s_\-.*]*g[\s_\-.*]*a/i,
     /n[\s_\-.*]*i[\s_\-.*]*g[\s_\-.*]*e[\s_\-.*]*r/i,
@@ -88,8 +58,6 @@ const BAD_PATTERNS = [
     /n[\s_\-.*]*e[\s_\-.*]*g[\s_\-.*]*e[\s_\-.*]*r/i,
     /nigg[a4@]+/i,
     /n[!1]+gg[ae3]+r?/i,
-
-    // kys
     /\bk+y+s+\b/i,
 ];
 
@@ -101,7 +69,7 @@ function containsBadWord(text) {
 
 // ── Mute ───────────────────────────────────────────────────────
 const muted = {};
-const MUTE_DURATION = 60 * 60 * 1000; // 1 час
+const MUTE_DURATION = 60 * 60 * 1000;
 
 function isMuted(uid) {
     if (!muted[uid]) return false;
@@ -127,12 +95,20 @@ function pruneOffline(topic) {
             delete online[topic][uid];
 }
 
-function getOnlineList(topic) {
+// onlineList — только видимые игроки (для DM списка, без скрытых)
+// onlineCount — все игроки включая скрытых (для счётчика "X online")
+function getOnlineData(topic) {
     pruneOffline(topic);
     const list = [];
-    for (const uid in online[topic])
-        list.push({ uid, ...online[topic][uid] });
-    return list;
+    let count = 0;
+    for (const uid in online[topic]) {
+        const entry = online[topic][uid];
+        count++;
+        if (!entry.hidden) {
+            list.push({ uid, display: entry.display, name: entry.name });
+        }
+    }
+    return { list, count };
 }
 
 function readBody(req) {
@@ -164,7 +140,14 @@ const server = http.createServer(async (req, res) => {
         if (!topic || !uid) { json(res, 400, { error: "missing fields" }); return; }
 
         if (!online[topic]) online[topic] = {};
-        online[topic][uid] = { display: display || uid, name: name || uid, lastSeen: Date.now() };
+        // Сохраняем hidden статус если он уже был установлен через /ping или /messages
+        const existing = online[topic][uid] || {};
+        online[topic][uid] = {
+            display:  display || uid,
+            name:     name    || uid,
+            lastSeen: Date.now(),
+            hidden:   existing.hidden || false
+        };
 
         if (msgType === "ping" || !text) { json(res, 200, { ok: true }); return; }
 
@@ -181,7 +164,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const msg = {
-            id: nextId++,
+            id:      nextId++,
             topic,
             msgType: msgType || "public",
             display: display || uid,
@@ -203,16 +186,16 @@ const server = http.createServer(async (req, res) => {
     if (method === "GET" && path === "/messages") {
         const topic   = url.searchParams.get("topic");
         const after   = parseInt(url.searchParams.get("after") || "0", 10);
-        const myUid   = url.searchParams.get("uid") || "";
+        const myUid   = url.searchParams.get("uid")     || "";
         const display = url.searchParams.get("display") || myUid;
-        const name    = url.searchParams.get("name") || myUid;
+        const name    = url.searchParams.get("name")    || myUid;
+        const hidden  = url.searchParams.get("hidden") === "1";
 
         if (!topic) { json(res, 400, { error: "missing topic" }); return; }
 
-        // Обновляем lastSeen — отдельный heartbeat не нужен
         if (myUid) {
             if (!online[topic]) online[topic] = {};
-            online[topic][myUid] = { display, name, lastSeen: Date.now() };
+            online[topic][myUid] = { display, name, lastSeen: Date.now(), hidden };
         }
 
         const result = messages.filter(m => {
@@ -222,7 +205,8 @@ const server = http.createServer(async (req, res) => {
             return false;
         });
 
-        json(res, 200, { messages: result, onlineList: getOnlineList(topic) });
+        const od = getOnlineData(topic);
+        json(res, 200, { messages: result, onlineList: od.list, onlineCount: od.count });
         return;
     }
 
@@ -230,7 +214,8 @@ const server = http.createServer(async (req, res) => {
     if (method === "GET" && path === "/online") {
         const topic = url.searchParams.get("topic");
         if (!topic) { json(res, 400, { error: "missing topic" }); return; }
-        json(res, 200, { onlineList: getOnlineList(topic) });
+        const od = getOnlineData(topic);
+        json(res, 200, { onlineList: od.list, onlineCount: od.count });
         return;
     }
 
@@ -240,11 +225,15 @@ const server = http.createServer(async (req, res) => {
         const uid     = url.searchParams.get("uid");
         const display = url.searchParams.get("display") || uid;
         const name    = url.searchParams.get("name")    || uid;
+        const hidden  = url.searchParams.get("hidden") === "1";
+
         if (topic && uid) {
             if (!online[topic]) online[topic] = {};
-            online[topic][uid] = { display, name, lastSeen: Date.now() };
+            online[topic][uid] = { display, name, lastSeen: Date.now(), hidden };
         }
-        json(res, 200, { ok: true, onlineList: getOnlineList(topic) });
+
+        const od = getOnlineData(topic);
+        json(res, 200, { ok: true, onlineList: od.list, onlineCount: od.count });
         return;
     }
 
