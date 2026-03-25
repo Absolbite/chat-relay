@@ -3,7 +3,8 @@ const http = require("http");
 // ── In-memory storage ──────────────────────────────────────────
 const messages = [];
 const online   = {};
-let   nextId   = 1;
+// Start nextId from timestamp-based value to survive restarts
+let   nextId   = Date.now();
 
 const MAX_MESSAGES = 100;
 const OFFLINE_MS   = 90000;
@@ -95,8 +96,6 @@ function pruneOffline(topic) {
             delete online[topic][uid];
 }
 
-// onlineList — только видимые игроки (для DM списка, без скрытых)
-// onlineCount — все игроки включая скрытых (для счётчика "X online")
 function getOnlineData(topic) {
     pruneOffline(topic);
     const list = [];
@@ -140,7 +139,6 @@ const server = http.createServer(async (req, res) => {
         if (!topic || !uid) { json(res, 400, { error: "missing fields" }); return; }
 
         if (!online[topic]) online[topic] = {};
-        // Сохраняем hidden статус если он уже был установлен через /ping или /messages
         const existing = online[topic][uid] || {};
         online[topic][uid] = {
             display:  display || uid,
@@ -198,8 +196,11 @@ const server = http.createServer(async (req, res) => {
             online[topic][myUid] = { display, name, lastSeen: Date.now(), hidden };
         }
 
+        // If after >= nextId, server restarted — send all messages
+        const effectiveAfter = after >= nextId ? 0 : after;
+
         const result = messages.filter(m => {
-            if (m.topic !== topic || m.id <= after) return false;
+            if (m.topic !== topic || m.id <= effectiveAfter) return false;
             if (m.msgType === "public" || m.msgType === "join") return true;
             if (m.msgType === "private") return m.toUid === myUid || m.uid === myUid;
             return false;
@@ -233,7 +234,8 @@ const server = http.createServer(async (req, res) => {
         }
 
         const od = getOnlineData(topic);
-        json(res, 200, { ok: true, onlineList: od.list, onlineCount: od.count });
+        // Send current nextId so client can detect restart
+        json(res, 200, { ok: true, onlineList: od.list, onlineCount: od.count, serverNextId: nextId });
         return;
     }
 
