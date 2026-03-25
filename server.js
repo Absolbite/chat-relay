@@ -3,7 +3,7 @@ const http = require("http");
 // ── In-memory storage ──────────────────────────────────────────
 const messages = [];
 const online   = {};
-let   nextId   = 1;
+let   nextId   = Date.now();
 
 const MAX_MESSAGES = 100;
 const OFFLINE_MS   = 90000;
@@ -95,8 +95,6 @@ function pruneOffline(topic) {
             delete online[topic][uid];
 }
 
-// onlineList — только видимые игроки (для DM списка, без скрытых)
-// onlineCount — все игроки включая скрытых (для счётчика "X online")
 function getOnlineData(topic) {
     pruneOffline(topic);
     const list = [];
@@ -140,7 +138,6 @@ const server = http.createServer(async (req, res) => {
         if (!topic || !uid) { json(res, 400, { error: "missing fields" }); return; }
 
         if (!online[topic]) online[topic] = {};
-        // Сохраняем hidden статус если он уже был установлен через /ping или /messages
         const existing = online[topic][uid] || {};
         online[topic][uid] = {
             display:  display || uid,
@@ -149,7 +146,19 @@ const server = http.createServer(async (req, res) => {
             hidden:   existing.hidden || false
         };
 
-        if (msgType === "ping" || !text) { json(res, 200, { ok: true }); return; }
+        // FIX: reject ping, missing text, AND whitespace-only text
+        if (msgType === "ping" || !text || !text.trim()) {
+            json(res, 200, { ok: true });
+            return;
+        }
+
+        const trimmedText = text.trim();
+
+        // FIX: enforce max length server-side (200 chars)
+        if (trimmedText.length > 200) {
+            json(res, 400, { error: "message too long" });
+            return;
+        }
 
         if (isMuted(uid)) {
             const remaining = Math.ceil((muted[uid] - Date.now()) / 60000);
@@ -157,7 +166,7 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
-        if (containsBadWord(text)) {
+        if (containsBadWord(trimmedText)) {
             muted[uid] = Date.now() + MUTE_DURATION;
             json(res, 403, { error: "muted", minutesLeft: 60 });
             return;
@@ -171,7 +180,7 @@ const server = http.createServer(async (req, res) => {
             name:    name    || uid,
             uid,
             toUid:   toUid  || null,
-            text,
+            text:    trimmedText,   // FIX: store trimmed text
             time:    time   || new Date().toISOString().substr(11, 5)
         };
 
@@ -198,8 +207,12 @@ const server = http.createServer(async (req, res) => {
             online[topic][myUid] = { display, name, lastSeen: Date.now(), hidden };
         }
 
+        const effectiveAfter = after >= nextId ? 0 : after;
+
         const result = messages.filter(m => {
-            if (m.topic !== topic || m.id <= after) return false;
+            if (m.topic !== topic || m.id <= effectiveAfter) return false;
+            // FIX: skip empty/whitespace messages just in case
+            if (!m.text || !m.text.trim()) return false;
             if (m.msgType === "public" || m.msgType === "join") return true;
             if (m.msgType === "private") return m.toUid === myUid || m.uid === myUid;
             return false;
@@ -233,7 +246,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         const od = getOnlineData(topic);
-        json(res, 200, { ok: true, onlineList: od.list, onlineCount: od.count });
+        json(res, 200, { ok: true, onlineList: od.list, onlineCount: od.count, serverNextId: nextId });
         return;
     }
 
